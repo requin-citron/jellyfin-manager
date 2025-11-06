@@ -30,6 +30,7 @@ def parse_args():
     p.add_argument("--timeout", type=int, default=20, help="Timeout réseau (secondes)")
     p.add_argument("--add-library", help="ID ou nom de la bibliothèque à ajouter à tous les utilisateurs (dry-run si --apply absent)")
     p.add_argument("--list", action="store_true", help="Lister toutes les bibliothèques (ID -> Nom) et quitter")
+    p.add_argument("--del-library", help="ID ou nom de la bibliothèque à retirer de tous les utilisateurs (dry-run si --apply absent)")
     p.add_argument("--apply", action="store_true", help="Appliquer les modifications ; si absent, le script fera un dry-run et affichera les changements prévus")
     return p.parse_args()
 
@@ -323,6 +324,108 @@ def main():
             print(f"\nModifications appliquées : {changed} mises à jour, {skipped_all} utilisateurs ignorés (EnableAllFolders=true), {errors} erreurs.")
         else:
             print(f"\nDry-run : {len(to_update)} utilisateurs seraient modifiés, {skipped_all} ignorés (EnableAllFolders=true). Utilisez --apply pour appliquer.")
+
+    # Si on veut supprimer une bibliothèque de tous les utilisateurs
+    if args.del_library:
+        target = args.del_library
+        target_id = None
+        if target in folder_map:
+            target_id = target
+            target_name = folder_map[target_id]
+        else:
+            matches = [fid for fid, name in folder_map.items() if isinstance(name, str) and name.lower() == target.lower()]
+            if len(matches) == 1:
+                target_id = matches[0]
+                target_name = folder_map[target_id]
+            elif len(matches) > 1:
+                print(f"Plusieurs bibliothèques correspondent au nom '{target}' :", file=sys.stderr)
+                for m in matches:
+                    print(f"  - {m} -> {folder_map.get(m)}", file=sys.stderr)
+                print("Utilisez l'ID exact pour lever l'ambiguïté.", file=sys.stderr)
+                sys.exit(4)
+            else:
+                contains = [fid for fid, name in folder_map.items() if isinstance(name, str) and target.lower() in name.lower()]
+                if len(contains) == 1:
+                    target_id = contains[0]
+                    target_name = folder_map[target_id]
+                elif len(contains) > 1:
+                    print(f"Plusieurs bibliothèques contiennent '{target}' :", file=sys.stderr)
+                    for m in contains:
+                        print(f"  - {m} -> {folder_map.get(m)}", file=sys.stderr)
+                    print("Utilisez l'ID exact pour lever l'ambiguïté.", file=sys.stderr)
+                    sys.exit(4)
+                else:
+                    print(f"Bibliothèque '{target}' introuvable via l'API (IDs connus : {len(folder_map)}).", file=sys.stderr)
+                    sys.exit(5)
+
+        print(f"Target library (remove): {target_id} -> {target_name}")
+
+        removed = 0
+        skipped_all = 0
+        errors = 0
+        to_update = []
+
+        for uid, uname in users:
+            policy = fetch_user_policy(jf, uid)
+            enable_all = bool(policy.get("EnableAllFolders"))
+            if enable_all:
+                skipped_all += 1
+                continue
+
+            enabled_ids = policy.get("EnabledFolders") or policy.get("EnabledFolderIds") or []
+            if not isinstance(enabled_ids, list):
+                enabled_ids = []
+
+            enabled_ids = [str(i) for i in enabled_ids if i]
+            if target_id not in enabled_ids:
+                # pas présent, rien à faire
+                continue
+
+            # Préparer la nouvelle policy en retirant l'ID
+            new_policy = dict(policy) if isinstance(policy, dict) else {}
+
+            def ensure_list_remove(d: dict, key: str, val: str):
+                cur = d.get(key)
+                if not isinstance(cur, list):
+                    cur = []
+                cur = [str(x) for x in cur if x]
+                cur = [x for x in cur if x != val]
+                d[key] = cur
+
+            ensure_list_remove(new_policy, "EnabledFolders", target_id)
+            ensure_list_remove(new_policy, "EnabledFolderIds", target_id)
+
+            print(f"User: {uname} ({uid}) -> retirer {target_name} ({target_id})")
+
+            if args.apply:
+                try:
+                    try:
+                        jf.put(f"/Users/{uid}/Policy", json=new_policy)
+                    except requests.exceptions.HTTPError as he:
+                        status = None
+                        try:
+                            status = he.response.status_code
+                        except Exception:
+                            status = None
+                        if status == 405:
+                            try:
+                                print(f"PUT not allowed, retrying with POST for user {uname} ({uid})")
+                                jf.post(f"/Users/{uid}/Policy", json=new_policy)
+                            except Exception:
+                                raise
+                        else:
+                            raise
+                    removed += 1
+                except Exception as e:
+                    print(f"Erreur suppression {uname} ({uid}) : {e}", file=sys.stderr)
+                    errors += 1
+            else:
+                to_update.append((uid, uname))
+
+        if args.apply:
+            print(f"\nSuppression appliquée : {removed} mises à jour, {skipped_all} utilisateurs ignorés (EnableAllFolders=true), {errors} erreurs.")
+        else:
+            print(f"\nDry-run : {len(to_update)} utilisateurs seraient modifiés (suppression), {skipped_all} ignorés (EnableAllFolders=true). Utilisez --apply pour appliquer.")
 
 
     # --- Audit par utilisateur ---
