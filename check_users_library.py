@@ -29,6 +29,7 @@ def parse_args():
     p.add_argument("--insecure", action="store_true", help="Désactiver la vérification TLS (HTTPS)")
     p.add_argument("--timeout", type=int, default=20, help="Timeout réseau (secondes)")
     p.add_argument("--add-library", help="ID ou nom de la bibliothèque à ajouter à tous les utilisateurs (dry-run si --apply absent)")
+    p.add_argument("--list", action="store_true", help="Lister toutes les bibliothèques (ID -> Nom) et quitter")
     p.add_argument("--apply", action="store_true", help="Appliquer les modifications ; si absent, le script fera un dry-run et affichera les changements prévus")
     return p.parse_args()
 
@@ -197,6 +198,17 @@ def main():
         sys.exit(2)
 
     folder_map = fetch_virtual_folders(jf)  # {folder_id: folder_name}
+
+    # Si on veut simplement lister les bibliothèques et quitter
+    if args.list:
+        if not folder_map:
+            print("Aucune bibliothèque trouvée via l'API (vérifiez l'URL/la clé API).", file=sys.stderr)
+            sys.exit(1)
+        # Afficher trié par nom
+        items = sorted(folder_map.items(), key=lambda x: (x[1] or "").lower())
+        for fid, name in items:
+            print(f"{fid} -> {name}")
+        sys.exit(0)
 
     # Si on veut ajouter une bibliothèque à tous les utilisateurs
     if args.add_library:
