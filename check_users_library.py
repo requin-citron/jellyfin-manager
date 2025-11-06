@@ -292,26 +292,11 @@ def main():
 
             if args.apply:
                 try:
-                    # Appel API PUT pour mettre à jour la policy
+                    # Appel API POST pour mettre à jour la policy
                     try:
-                        jf.put(f"/Users/{uid}/Policy", json=new_policy)
+                        jf.post(f"/Users/{uid}/Policy", json=new_policy)
                     except requests.exceptions.HTTPError as he:
-                        # Certains serveurs Jellyfin n'acceptent pas PUT sur /Users/{id}/Policy
-                        # et requièrent POST. Si on reçoit 405, retenter en POST.
-                        status = None
-                        try:
-                            status = he.response.status_code
-                        except Exception:
-                            status = None
-                        if status == 405:
-                            try:
-                                print(f"PUT not allowed, retrying with POST for user {uname} ({uid})")
-                                jf.post(f"/Users/{uid}/Policy", json=new_policy)
-                            except Exception:
-                                # réémettre l'exception originale pour être interceptée par le outer except
-                                raise
-                        else:
-                            raise
+                        raise
                     changed += 1
                 except Exception as e:
                     print(f"Erreur mise à jour {uname} ({uid}) : {e}", file=sys.stderr)
@@ -400,21 +385,9 @@ def main():
             if args.apply:
                 try:
                     try:
-                        jf.put(f"/Users/{uid}/Policy", json=new_policy)
+                        jf.post(f"/Users/{uid}/Policy", json=new_policy)
                     except requests.exceptions.HTTPError as he:
-                        status = None
-                        try:
-                            status = he.response.status_code
-                        except Exception:
-                            status = None
-                        if status == 405:
-                            try:
-                                print(f"PUT not allowed, retrying with POST for user {uname} ({uid})")
-                                jf.post(f"/Users/{uid}/Policy", json=new_policy)
-                            except Exception:
-                                raise
-                        else:
-                            raise
+                        raise
                     removed += 1
                 except Exception as e:
                     print(f"Erreur suppression {uname} ({uid}) : {e}", file=sys.stderr)
