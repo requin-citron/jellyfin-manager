@@ -60,6 +60,15 @@ class JF:
             return {}
         return r.json()
 
+    def post(self, path: str, json: dict = None):
+        """Effectue une requête POST JSON et retourne le JSON réponse (ou lève)."""
+        url = f"{self.base_url}{path}"
+        r = self.session.post(url, json=json or {}, verify=self.verify, timeout=self.timeout)
+        r.raise_for_status()
+        if r.text.strip() == "":
+            return {}
+        return r.json()
+
 def widen_mapping_with_items_api(jf: 'JF', ids: List[str], known: Dict[str, str]) -> None:
     """Complète le mapping ID->Name via /Items?Ids=... pour les IDs inconnus."""
     missing = [i for i in ids if i and i not in known]
@@ -271,7 +280,25 @@ def main():
             if args.apply:
                 try:
                     # Appel API PUT pour mettre à jour la policy
-                    jf.put(f"/Users/{uid}/Policy", json=new_policy)
+                    try:
+                        jf.put(f"/Users/{uid}/Policy", json=new_policy)
+                    except requests.exceptions.HTTPError as he:
+                        # Certains serveurs Jellyfin n'acceptent pas PUT sur /Users/{id}/Policy
+                        # et requièrent POST. Si on reçoit 405, retenter en POST.
+                        status = None
+                        try:
+                            status = he.response.status_code
+                        except Exception:
+                            status = None
+                        if status == 405:
+                            try:
+                                print(f"PUT not allowed, retrying with POST for user {uname} ({uid})")
+                                jf.post(f"/Users/{uid}/Policy", json=new_policy)
+                            except Exception:
+                                # réémettre l'exception originale pour être interceptée par le outer except
+                                raise
+                        else:
+                            raise
                     changed += 1
                 except Exception as e:
                     print(f"Erreur mise à jour {uname} ({uid}) : {e}", file=sys.stderr)
